@@ -7,6 +7,10 @@ example_read: example_read.o mmio.o
 
 example_write: example_write.o mmio.o
 	$(CC) -o write example_write.o mmio.o -I.
+	
+test: test.o mmio.o
+	$(CC) -o test test.o mmio.o -I.
+	
 
 
      
