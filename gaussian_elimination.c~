@@ -1,0 +1,23 @@
+#include <stdio.h>      /* printf, scanf, NULL */
+#include <stdlib.h>     /* malloc, free, rand */
+
+#DEFINE MAX_SIZE 100
+
+
+
+int main() {
+	return 0;	
+}
+
+double *gauss_sequential (double **a, double *b) {
+	double *x, sum, l[MAX_SIZE];
+	int i, j, k, r;
+	
+	x = (double *) malloc(n * sizeof(double));
+	for (k = 0; k < n - 1; k++) { /* Forward elimination */
+		r = max_col(a, k);
+		if (k != r)
+			exchange_row(a, b, r, k);
+		for (i = k + 1; )
+	}
+}
