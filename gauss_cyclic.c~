@@ -150,7 +150,10 @@ int max_col_loc(double **a, int k) {
 	while (j % p != myrank) 
 		j++;
 		
-	for(; j < n; j += p) {
+	while(j < ) {
+		j = ++;
+		if (j < k)
+			continue;
 		
 		if( max_val < (aux = fabs(a[k][j]))) {
 			max_val = aux;
