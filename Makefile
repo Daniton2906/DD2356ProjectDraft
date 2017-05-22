@@ -11,6 +11,7 @@ example_write: example_write.o mmio.o
 test: test.o mmio.o
 	$(CC) -o test test.o mmio.o -I.
 	
-
+gauss_cyclic: gauss_cyclic.c
+	mpicc gauss_cyclic.c mmio.c -o gauss.x
 
      
