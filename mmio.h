@@ -48,7 +48,7 @@ int mm_write_mtx_array_size(FILE *f, int M, int N);
 int mm_is_valid(MM_typecode matcode);		/* too complex for a macro */
 
 
-/********************* MM_typecode modify fucntions ***************************/
+/********************* MM_typecode modify functions ***************************/
 
 #define mm_set_matrix(typecode)	((*typecode)[0]='M')
 #define mm_set_coordinate(typecode)	((*typecode)[1]='C')
