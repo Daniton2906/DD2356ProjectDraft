@@ -37,6 +37,8 @@ typedef struct{
 	int pvtline;
 } Pair;
 
+double * gauss_double_cyclic (double **a, double *b, int n);
+
 int Co (int k);
 int Ro (int k);
 int member (int me, int G,  char type);
@@ -45,14 +47,13 @@ int Rop (int q);
 int grp_leader (int G, char type);
 int rank(int q, int G, char type, int p);
 
-double * gauss_double_cyclic (double **a, double *b, int n);
-
 int max_col_loc(double** a, int k);
 void exchange_row_loc(double** a, double* b, int r, int k);
 void copy_row_loc(double** a, double* b, int k, double* buf);
 int compute_partner(int G, char type, int me);
-
+int compute_size(int n, int k, int G, char type);
 void exchange_row_buf(double** a, double* b, int r, double* buf, int k);
+void compute_elim_fact_loc (double** a, double* b, int k, double* buf, double* l);
 
 int main(int argc, char *argv[]) {
 
@@ -348,47 +349,54 @@ double * gauss_double_cyclic (double **a, double *b, int n) {
 		MPI_Bcast(&y, 1, MPI_DOUBLE_INT, grp_leader(Co(k), 'c'), MPI_COMM_WORLD);
 		r = y.pvtline;
 		
+		/*pivot row and row k are in the same row group */
 		if(Ro(k) == Ro(r)){
-			/*pivot row and row k are in the same row group */
+			//if I am member of the row group of the row k
+			//I have chunks of the k row and the pivot row
 			if (member(me, Ro(k), 'r')) {
+				//just exchange my rows only if are different rows
 				if (r != k) 
-					exchange_row_loc(a, b, r, k);
+					exchange_row_loc(a, b, r, k); //exchange my chunks of data
+				//copy on the buffer to send it to others processors
 				copy_row_loc(a, b, k, buf); 
 			} 
 		}
 		 /* pivot row and row k are in different row groups */
 		else if (member(me, Ro(k), 'r')) {
+			//copy my chunk of data in the buffer
 			copy_row_loc(a, b, k, buf);
-			q = compute_partner(Ro(r), me);
-			psz = compute_size(n, k, Ro(k));
+			q = compute_partner(Ro(r), 'r', me);
+			psz = compute_size(n, k, Ro(k), 'r');
 			MPI_Send(buf+k, psz, MPI_DOUBLE, q, tag, MPI_COMM_WORLD); 
 		}
-		else if (member(me,Ro(r), 'r')) {
+		else if (member(me, Ro(r), 'r')) {
 			/* executing processor contains a part of the pivot row */
-			q = compute_partner(Ro(k), me);
-			psz = compute_size(n, k, Ro(r));
+			q = compute_partner(Ro(k), 'r', me);
+			psz = compute_size(n, k, Ro(r), 'r');
 			MPI_Recv(buf+k, psz, MPI_DOUBLE, q, tag, MPI_COMM_WORLD, &status) ;
 			exchange_row_buf(a, b, r, buf, k);
 		}
 		
-		for (q=0; q<p; q++) /* broadcast of pivot row */
+		/* broadcast of pivot row */
+		
+		for (q = 0; q < p; q++) 
 			if (member(q, Ro(r), 'r') && member(me, Cop(q), 'c')) {
-				ql = rank(q, Cop(q)); 
-				buf_size = compute_size(n,k,Ro(k));
-				MPI_Bcast(buf+k, buf_size, MPI_DOUBLE, ql, comm(Cop(q)));
+				ql = rank(q, Cop(q), 'c'); 
+				buf_size = compute_size(n, k, Ro(k), 'r');
+				MPI_Bcast(buf+k, buf_size, MPI_DOUBLE, ql, column_comm);
 			}
 			
-		if ((Ro(k) != Ro(r)) && (member(me, Ro(k)))
+		if ((Ro(k) != Ro(r)) && (member(me, Ro(k), 'r'))
 			copy_row_loc(a, b, buf, k);
 			
-		if (member(me,Co(k))) 
-			elim_buf = compute_elim_fact_loc(a, b, k, buf);
+		if (member(me, Co(k), 'c')) 
+			compute_elim_fact_loc(a, b, k, buf, elim_buf);
 			
-		for (q=0; q<p; q++) /* broadcast of elimination factors */
-			if (member(q,Co(k)) && member(me,Rop(q))) {
-				ql = rank(q,Rop(q)); 
-				elim_size = compute_size(n,k,Co(k));
-				MPI_Bcast(elim_buf, elim_size, MPI_DOUBLE, ql, comm(Rop(q))); 
+		for (q = 0; q < p; q++) /* broadcast of elimination factors */
+			if (member(q, Co(k), 'c') && member(me, Rop(q), 'r')) {
+				ql = rank(q, Rop(q)); 
+				elim_size = compute_size(n, k, Co(k), 'c');
+				MPI_Bcast(elim_buf, elim_size, MPI_DOUBLE, ql, row_comm); 
 			}
 			
 		compute_local_entries(a, b, k, elim_buf, buf); 
@@ -534,8 +542,15 @@ int rank(int q, int G, char type) {
 }
 
 /*
-
-
+	max_col_loc 
+	
+		double** a: (n x n) matrix
+		int k: column
+	
+		find in the column k the value with the
+		greastet absolute value
+		only search between the rows the processor owns
+		return the row of this value
 
 */
 int max_col_loc(double** a, int k) {
@@ -566,6 +581,20 @@ int max_col_loc(double** a, int k) {
 	return index;
 }
 
+
+/*
+	exchange_row_loc:
+	
+		double** a: (n x n) matrix 
+		double* b: vector of size n
+		int r: row r
+		int k: row k
+	
+		Both rows owns to the processor
+		exchange the row k and the row r in the matrix a and the vector b
+		exchange only the chunks of data the processor owns
+
+*/
 void exchange_row_loc(double** a, double* b, int r, int k) {
 	
 	int column_rank, column_size;
@@ -585,6 +614,18 @@ void exchange_row_loc(double** a, double* b, int r, int k) {
 	}
 }
 
+/*
+	copy_row_loc:
+	
+		double** a: (n x n) matrix 
+		double* b: vector of size n
+		int k: row k
+		double* buf: buffer with size n
+	
+		copy the chunk of data of row k of the matrix a
+		and the element k of vector b in the buffer
+
+*/
 void copy_row_loc(double** a, double* b, int k, double* buf) {
 	
 	int column_rank, column_size;
@@ -593,29 +634,40 @@ void copy_row_loc(double** a, double* b, int k, double* buf) {
 
 	int j = column_rank * b2, end = (column_rank + 1) * b2;
 	
-	while (j < k)
+	while (j < k && j < end)
 		j++;
 		
 	buf[n] = b[k];
-	 
+	int i = 0;
 	for(j; j < end && j < n; j++) {
-		buf[j] = a[k][j];
+		buf[k + i] = a[k][j];
+		i++;
 	}
 }
 
+/*
+	compute_partner:
+	
+		int G: group number
+		char type: column ('c') or row ('r') group
+		int me: id processor
+		
+		Depends on the case:
+		type == c -> return the processor in the column group G
+				which belong the same row group as me processor  
+		type == r -> return the processor in the row group G
+				which belong the same column group as me processor
 
+*/
 int compute_partner(int G, char type, int me) {
 
-	int row_rank, row_size;
-	MPI_Comm_rank(row_comm, &row_rank);
+	int row_size, column_size;
+
 	MPI_Comm_size(row_comm, &row_size);
-	
-	int column_rank, column_size;
-	MPI_Comm_rank(column_comm, &column_rank);
 	MPI_Comm_size(column_comm, &column_size);
 	
 	if (type == 'c') {
-		int row_group = Cop(me);
+		int row_group = Rop(me);
 		return row_group * column_size + G;
 	}
 	else if (type == 'r') {
@@ -626,6 +678,19 @@ int compute_partner(int G, char type, int me) {
 		return -1;
 }
 
+/*
+	compute_size:
+	
+		int n: size of the matrix
+		int k: k row
+		int G: group number
+		char type: column ('c') or row ('r') group
+		
+		Compute the chunk size from the minimum between the k index column/row
+		and the start index of the chunk of data
+		until the index of the next 
+
+*/
 int compute_size(int n, int k, int G, char type) {
 
 	int rank, size;
@@ -648,15 +713,32 @@ int compute_size(int n, int k, int G, char type) {
 	else 
 		return -1;
 		
-	while (j < k)
+	while (j < k && j < end)
 		j++;
 		
 	for(j; j < end && j < n; j++)
 		size++;
 		
+	//size += (n - j);
+		
 	return size;
 }
 
+/*
+	exchange_row_buf:
+	
+		double** a: (n x n) matrix 
+		double* b: vector of size n
+		int r: row r
+		double* buf: buffer with size n
+		int k: index k
+		
+		exchange the data on the buffer with the data in the row r in the matrix a
+		and the element r in the vector r
+		The exchange starts from the minimum between index k 
+		and the start index of the chunk of data
+
+*/
 void exchange_row_buf(double** a, double* b, int r, double* buf, int k) {
 	
 	int column_rank, column_size;
@@ -669,20 +751,82 @@ void exchange_row_buf(double** a, double* b, int r, double* buf, int k) {
 	buf[n] = b[r];
 	b[r] = aux;
 	
-	while (j < k)
+	while (j < k && j < end)
 		j++;
 	
-	for(j; j < end && j < n; j++) {
-		aux = buf[i];
-		buf[i] = a[r][i];
-		a[r][i] = aux;
+	int i = 0;
+	for(; j < end && j < n; j++) {
+		aux = buf[k + i];
+		buf[k + i] = a[r][j];
+		a[r][j] = aux;
+		i++;
+	}
+}
+
+/*
+	compute_elim_fact_loc:
+		double** a: (n x n) matrix 
+		double* b: vector of size n
+		int k: column k
+		double* buf: buffer with size n + 1
+		double* buf: eliminaton buffer with size n + 1
+
+*/
+void compute_elim_fact_loc (double** a, double* b, int k, double* buf, double* l) {
+
+	int column_rank, column_size;
+	MPI_Comm_rank(column_comm, &column_rank);
+	MPI_Comm_size(column_comm, &column_size);
+	
+	int i = column_rank * b2, end = (column_rank + 1) * b2; 
+	while (i < k+1 && i < end) 
+		i++;
+	
+	int j = 0;
+	for (; i < end && i < n; i++) {
+		l[j] = a[i][k] / buf[k];
+		j++;
+		b[i] = b[i] - l[j]*buf[n];
+	}
+}
+
+void compute_local_entries(a, b, k, elim_buf, buf) {
+
+	int row_rank, row_size;
+	MPI_Comm_rank(row_comm, &row_rank);
+	MPI_Comm_size(row_comm, &row_size);
+
+	int column_rank, column_size;
+	MPI_Comm_rank(column_comm, &column_rank);
+	MPI_Comm_size(column_comm, &column_size);
+
+	int i = column_rank * b2, end = (column_rank + 1) * b2; 
+	while (i < k+1 && i < end) 
+		i++;
+		
+	int j = row_rank * b1, end2 = (row_rank + 1) * b1; 
+	while (i < k+1 && i < end) 
+		i++;
+		
+	while (j < k+1 && j < end2) 
+		j++;
+	
+	l = j;
+	int k1 = 0, k2 = 0;
+	for (; i < end; i++) {
+		k1 = 0;
+		for (j = l; j < end2; j++){
+			a[i][j] = a[i][j] - l[k2]*buf[k + k1];	
+			k1++
+		}
+		k2++;
 	}
 }
 
 /*
 
 
-*/
+
 MPI_Comm comm(int G, char type, Co(k), p2) {
 	
 	int size;
@@ -703,7 +847,7 @@ MPI_Comm comm(int G, char type, Co(k), p2) {
 	MPI_Comm prime_comm;
 	MPI_Comm_create_group(MPI_COMM_WORLD, prime_group, 0, &prime_comm);
 }
-
+*/
 
 
 

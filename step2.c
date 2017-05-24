@@ -465,7 +465,7 @@ void exchange_row(double **a, double *b, int r, int k) {
 		int k: row k
 		double* buf: buffer with size n
 	
-		copy the row k of the matrix k 
+		copy the row k of the matrix a 
 		and the element k of vector b in the buffer
 
 */
@@ -483,7 +483,7 @@ void copy_row(double **a, double *b, int k, double *buf) {
 		double** a: (n x n) matrix 
 		double* b: vector of size n
 		int r: row r
-		double* buf: buffer with size n
+		double* buf: buffer with size n + 1
 		int k: index k
 		
 		exchange the data on the buffer with the data in the row r in the matrix a
@@ -514,7 +514,7 @@ void copy_exchange_row(double **a, double *b, int r, double *buf, int k) {
 		double** a: (n x n) matrix 
 		double* b: vector of size n
 		int k: row k
-		double* buf: buffer with size n
+		double* buf: buffer with size n + 1
 		
 		Do the opposite of copy_row, i.e., copy the data of the buffer
 		in the row k of the matrix a and in the element k of the vector b 
