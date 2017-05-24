@@ -4,8 +4,8 @@
 #include <string.h>		/* strcmp, strlen */
 #include "mpi.h"
 
-#include "mmio.h"
-#include "buffer.h"
+#include "lib/mmio.h"
+#include "lib/buffer.h"
 
 #define MAX_SIZE 100
 
@@ -130,7 +130,7 @@ int main(int argc, char *argv[]) {
     for (k = 0; k< M*N; k++)
     {
         fscanf(f_input, "  %lg\n", &val);       
-        A[k/N][k%N] = val;
+        A[k%N][k/N] = val;
     }
 
 	fclose(f_input);
@@ -167,11 +167,11 @@ int main(int argc, char *argv[]) {
 		//appendRank(myrank, &sb);
     }
     
-	    test(A,b,n);
+	//test(A,b,n);
 		
 	//calculate solution linear system Ax = b
 	
-	/*
+	
 	double* result;
 	result = gauss_cyclic(A, b, M);
 	
@@ -193,7 +193,7 @@ int main(int argc, char *argv[]) {
 		
 	}
 	printf("%s \n", sb.buffer);
-	*/
+	
 	
 	
 	if(DEBUG_MATRIX) {
@@ -204,6 +204,7 @@ int main(int argc, char *argv[]) {
 		
 		for (i = 0; i < M; i++) {
 			if(i % p == myrank){
+				printf("row %d: ", i);
 				for (j = 0; j < N; j++) {
 					fprintf(stdout, "%10.3g", A[i][j]);
 				}
@@ -377,10 +378,16 @@ double* gauss_cyclic(double **a, double *b, int n) {
 	double sum;
 	for (k=n-1; k>=0; k--) { 
 		if (k % p == me) {
+			//printf("%d: \n",me);
+			//printf("a[%d] -> ", k);
 			sum = 0.0;
-			for (j=k+1; j < n; j++) 
+			for (j=k+1; j < n; j++){ 
 				sum = sum + a[k][j] * x[j];
+				//printf("%f ", a[k][j]);
+			}	
+			//printf("\n b[%d] -> %f\n", k, b[k]);
 			x[k] = 1/a[k][k] * (b[k] - sum); 
+			//printf("x[%d] = %f\n", k, x[k]);
 		}
 		MPI_Bcast(&x[k], 1, MPI_DOUBLE, k%p, MPI_COMM_WORLD);
 		//printf("%d: x[%d] = %f \n", me, k, x[k]);
@@ -390,49 +397,14 @@ double* gauss_cyclic(double **a, double *b, int n) {
 	return x;
 }
 
-
-void test(double** a, double *b, int n) {
-	int i,j ,k;
-	double* buf = (double *) malloc((n+1) * sizeof(double));
-	for(i = 0; i < n; i++)
-		buf[i] = 1;
-		
-	int myrank, p;
-	
-	MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
-	MPI_Comm_size(MPI_COMM_WORLD, &p);
-		
-	if(myrank == 0){
-		printf("A: \n");
-		for (i = 0; i < n; i++) {
-			fprintf(stdout, "row %d: \t", i);  	
-			for (j = 0; j < n; j++) {
-				fprintf(stdout, "%10.3g", a[i][j]);
-			}
-			fprintf(stdout, "\n");
-		}
-		/*
-		printf("b: \n");
-		for(i = 0; i < n; i++)
-			printf("%f \n", b[i]);
-		
-		printf("test max_col_loc\n");
-		*/
-	}
-	//k = 0;
-	//int r = max_col_loc(a, 0);
-	//printf("for rank %d, is the value (%f) in row (%d)\n",myrank, a[r][k], r);
-	
-}
-
 /*
 	max_col_loc 
 	
-	double** a: matrix
-	int k: column
+		double** a: (n x n) matrix
+		int k: column
 	
-	find in the column k the value with the
-	greastet absolute value, return the row of this value
+		find in the column k the value with the
+		greastet absolute value, return the row of this value
 
 
 */
@@ -462,6 +434,18 @@ int max_col_loc(double **a, int k) {
 	return index;
 }
 
+/*
+	exchange_row:
+	
+		double** a: (n x n) matrix 
+		double* b: vector of size n
+		int r: row r
+		int k: row k
+	
+		exchange the row k and the row r 
+			in the matrix a and the vector b
+	
+*/
 void exchange_row(double **a, double *b, int r, int k) {
 
 	double aux = b[r];
@@ -470,9 +454,21 @@ void exchange_row(double **a, double *b, int r, int k) {
 	
 	double* row = a[r];
 	a[r] = a[k];
-	a[k] = a[r];
+	a[k] = row;
 }
 
+/*
+	copy_row:
+	
+		double** a: (n x n) matrix 
+		double* b: vector of size n
+		int k: row k
+		double* buf: buffer with size n
+	
+		copy the row k of the matrix k 
+		and the element k of vector b in the buffer
+
+*/
 void copy_row(double **a, double *b, int k, double *buf) {
 	int i = 0;
 	for (; i < n; i++) {
@@ -481,6 +477,20 @@ void copy_row(double **a, double *b, int k, double *buf) {
 	buf[n] = b[k];
 }
 
+/*
+	copy_exchange_row:
+	
+		double** a: (n x n) matrix 
+		double* b: vector of size n
+		int r: row r
+		double* buf: buffer with size n
+		int k: index k
+		
+		exchange the data on the buffer with the data in the row r in the matrix a
+		and the element r in the vector r
+		The exchange starts from the index k
+
+*/
 void copy_exchange_row(double **a, double *b, int r, double *buf, int k) {
 	//buffer has the k row, I own the pivot row
 	//we want to exchange the data in the pivot row with the data in the buffer
@@ -498,6 +508,19 @@ void copy_exchange_row(double **a, double *b, int r, double *buf, int k) {
 	
 }
 
+/*
+	copy_back_row:
+	
+		double** a: (n x n) matrix 
+		double* b: vector of size n
+		int k: row k
+		double* buf: buffer with size n
+		
+		Do the opposite of copy_row, i.e., copy the data of the buffer
+		in the row k of the matrix a and in the element k of the vector b 
+		The copy back starts from the index k
+
+*/
 void copy_back_row(double **a, double *b, double *buf, int k) {
 	
 	b[k] = buf[n];
@@ -506,6 +529,137 @@ void copy_back_row(double **a, double *b, double *buf, int k) {
 	for (; i < n; i++)
 	
 		a[k][i] = buf[i];
+}
+
+void test(double** a, double *b, int n) {
+	int i,j ,k;
+	double* buf = (double *) malloc((n+1) * sizeof(double));
+	for(i = 0; i < n; i++)
+		buf[i] = 1;
+		
+	buf[n] = 0;
+		
+	int myrank, p;
+	
+	MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+	MPI_Comm_size(MPI_COMM_WORLD, &p);
+		
+	if(myrank == 0){
+		printf("A: \n");
+		for (i = 0; i < n; i++) {
+			fprintf(stdout, "row %d: \t", i);  	
+			for (j = 0; j < n; j++) {
+				fprintf(stdout, "%10.3g", a[i][j]);
+			}
+			fprintf(stdout, "\n");
+		}
+		
+		printf("b: \n");
+		for(i = 0; i < n; i++)
+			printf("%f \n", b[i]);
+		
+		
+		
+	}
+	
+	/*
+	if(myrank==0) printf("test max_col_loc\n");
+	k = 0;
+	int r = max_col_loc(a, 0);
+	printf("for rank %d, is the value (%f) in row (%d)\n",myrank, a[r][k], r);
+	*/
+	
+	/**/
+	
+	/*
+	if(myrank == 0){
+		printf("test exchange_row \n");
+		exchange_row(a, b, 0, 1);
+		exchange_row(a, b, 1, 2);
+		printf("A: \n");
+		for (i = 0; i < n; i++) {
+			fprintf(stdout, "row %d: \t", i);  	
+			for (j = 0; j < n; j++) {
+				fprintf(stdout, "%10.3g", a[i][j]);
+			}
+			fprintf(stdout, "\n");
+		}
+	}
+	
+	*/
+	
+	/*
+	if(myrank == 0){
+		printf("test copy_row \n");
+		copy_row(a,b,5,buf);
+		printf("buff: \n");
+		for(i = 0; i < n; i++)
+			printf("%f \t", buf[i]);
+			
+		printf("\n");
+		
+	}
+	*/
+	
+	/*
+	if(myrank == 0){
+		printf("test copy_exchange_row \n");
+		copy_exchange_row(a, b, 3, buf, 1);
+		
+		printf("A: \n");
+		for (i = 0; i < n; i++) {
+			fprintf(stdout, "row %d: \t", i);  	
+			for (j = 0; j < n; j++) {
+				fprintf(stdout, "%10.3g", a[i][j]);
+			}
+			fprintf(stdout, "\n");
+		}
+		
+		printf("b: \n");
+		for(i = 0; i < n; i++)
+			printf("%f \n", b[i]);
+		
+			
+		printf("\n");
+		
+		
+		
+		printf("buff: \n");
+		for(i = 0; i < n; i++)
+			printf("%f \t", buf[i]);
+			
+		
+			
+		printf("\n");
+	}
+	
+	*/
+	
+	if(myrank == 0){
+		printf("test copy_exchange_row \n");
+		copy_back_row(a, b, buf, 1);
+		
+		printf("A: \n");
+		for (i = 0; i < n; i++) {
+			fprintf(stdout, "row %d: \t", i);  	
+			for (j = 0; j < n; j++) {
+				fprintf(stdout, "%10.3g", a[i][j]);
+			}
+			fprintf(stdout, "\n");
+		}
+		
+		printf("b: \n");
+		for(i = 0; i < n; i++)
+			printf("%f \n", b[i]);
+					
+		printf("\n");
+						
+		printf("buff: \n");
+		for(i = 0; i < n; i++)
+			printf("%f \t", buf[i]);
+								
+		printf("\n");
+	}				
 }
 
 
