@@ -301,14 +301,10 @@ int main(int argc, char *argv[]) {
 	MPI_Cart_create(MPI_COMM_WORLD, 2, dims, periods, 0 )
 	*/
 	
-	//row_rank: local rank in the row_group I am part of
-	//row_size: number of elements of the row_group I am part of
 	int row_rank, row_size;
 	MPI_Comm_rank(row_comm, &row_rank);
 	MPI_Comm_size(row_comm, &row_size);
-
-	//column_rank: local rank in the row_group I am part of
-	//column_size: number of elements of the row_group I am part of
+	
 	int column_rank, column_size;
 	MPI_Comm_rank(column_comm, &column_rank);
 	MPI_Comm_size(column_comm, &column_size);
