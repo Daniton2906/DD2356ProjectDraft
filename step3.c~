@@ -199,11 +199,11 @@ int main(int argc, char *argv[]) {
 	}
 	
 
-	MPI_Comm_split(MPI_COMM_WORLD, myrank / p1, myrank % p1, &row_comm);
+	MPI_Comm_split(MPI_COMM_WORLD, myrank % p1, myrank / p1, &row_comm);
 	
 	MPI_Comm_group (row_comm, &row_group);
 	
-	MPI_Comm_split(MPI_COMM_WORLD, myrank / p2, myrank % p2, &column_comm);
+	MPI_Comm_split(MPI_COMM_WORLD, myrank % p2, myrank / p2, &column_comm);
 	
 	MPI_Comm_group (column_comm, &column_group);
 	

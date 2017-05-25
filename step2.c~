@@ -278,6 +278,7 @@ double* gauss_cyclic(double **a, double *b, int n) {
 		if (DEBUG_PROCESSOR)
 			printf("%d -> column %d: \n", me, k);
 		//obtain local max abs value between my rows 
+		printf("here: %d !", myrank)
 		r = max_col_loc(a, k);
 		
 		//save my rank and the value (if exists)
