@@ -3,6 +3,7 @@
 #include <math.h>		/* fabs */
 #include <string.h>		/* strcmp, strlen */
 #include "mpi.h"
+#include "omp.h"
 
 #include "lib/mmio.h"
 #include "lib/buffer.h"
@@ -39,8 +40,9 @@ void exchange_row(double **a, double *b, int r, int k);
 void copy_row(double **a, double *b, int k, double *buf);
 void copy_exchange_row(double **a, double *b, int r, double *buf, int k);
 void copy_back_row(double **a, double *b, double *buf, int k);
+
 double* gauss_cyclic(double **a, double *b, int n);
-void test(double** a, double *b, int n);
+
 
 
 int main(int argc, char *argv[]) {
@@ -182,18 +184,12 @@ int main(int argc, char *argv[]) {
 	if(myrank == 0){
 		mm_write_banner(f_output, matcode);
 	    mm_write_mtx_array_size(f_output, M, N);
-
-		//appendString("x: \n", &sb);
 		printf("x: \n");
 
-		for(i = 0; i < M; i++) {
-			//appendFloat(result[i], 5, &sb);
-			//appendString("\n", &sb);		
+		for(i = 0; i < M; i++) {		
 			fprintf(f_output,"%f \n", result[i]);
 			printf("%f \n", result[i]);
 		}
-		
-//		printf("%s \n", sb.buffer);
 	}
 
 	
@@ -231,16 +227,6 @@ int main(int argc, char *argv[]) {
 		MPI_Barrier(MPI_COMM_WORLD);
 	
 	}
-	/*
-	appendRank(myrank, &sb);
-	
-	appendString("Final A: \n", &sb);
-	appendFloatMatrix(A, M, N, &sb);	
-	appendString("\nfinal b: \n", &sb);
-	appendFloatArray(b, M, &sb);
-	
-	printf("%s \n\n", sb.buffer);
-	*/
 	MPI_Finalize();
 
 	return 0;
@@ -300,20 +286,8 @@ double* gauss_cyclic(double **a, double *b, int n) {
 		//Several cases:
 		/* Pivot row and row k are on the same processor */
 		if (k % p == y.node){ //I have the row with the max global value
-		/*
-			appendString("phase: ", &sb2);
-			appendInt(k, &sb2);
-			appendString("\n pivot: ", &sb2);
-			appendFloatArray(a[r], n, &sb2);
-			appendString("\n", &sb2);
-			*/
 			if (k % p == me) { //also, I have the row k of the column k
 				//then I just exchange my rows :)
-				/*
-				appendString("\n k: ", &sb2);
-				appendFloatArray(a[k], n, &sb2);
-				appendString("\n", &sb2);
-				*/
 				if (a[k][k] != y.val) 
 					exchange_row(a, b, r, k);
 				copy_row(a, b, k, buf); //copy the pivot row in the buffer
@@ -324,26 +298,12 @@ double* gauss_cyclic(double **a, double *b, int n) {
 		/* Pivot row and row k are owned by different processors */
 		//I have the k row and I will send it to the guy with the max global row
 		else if (k % p == me) {
-		/*
-			appendString("phase: ", &sb2);
-			appendInt(k, &sb2);
-			appendString("\n k: ", &sb2);
-			appendFloatArray(a[k], n, &sb2);
-			appendString("\n", &sb2);
-			*/
 			copy_row(a, b, k, buf); //copy the k row in the buffer
 			MPI_Send(buf+k, n-k+1, MPI_DOUBLE, y.node, tag,	MPI_COMM_WORLD);
 			//printf("%d has k row (%d), sending to %d\n", me, k, y.node);
 		}
 		//I have the row with the global max and I will receive the row k
 		else if (y.node == me) { 
-		/*
-			appendString("phase: ", &sb2);
-			appendInt(k, &sb2);
-			appendString("\n pivot: ", &sb2);
-			appendFloatArray(a[r], n, &sb2);
-			appendString("\n", &sb2);
-			*/
 			MPI_Recv(buf+k, n-k+1, MPI_DOUBLE, MPI_ANY_SOURCE, tag, MPI_COMM_WORLD, &status);
 			//printf("%d has pivot row (%d), reciving k row (%d)\n", me, r, k);
 			copy_exchange_row(a, b, r, buf, k); //exchange the buffer with the pivot row
@@ -364,9 +324,9 @@ double* gauss_cyclic(double **a, double *b, int n) {
 			
 		//compute the eliminator factor for my rows
 		//and new arrays a and b for my rows
+		//PARALELIZABLE
 		for (; i<n; i+=p) {
 			l[i] = a[i][k] / buf[k];
-			printf("phase(%d) row (%d) -> elim fact = %f\n", k, i, l[i]);
 			for (j=k+1; j<n; j++)
 				a[i][j] = a[i][j] - l[i]*buf[j];
 			b[i] = b[i] - l[i]*buf[n];
@@ -376,26 +336,19 @@ double* gauss_cyclic(double **a, double *b, int n) {
 			  
 		//MPI_Barrier(MPI_COMM_WORLD);
 	}
-	//appendString("\n", &sb2);
-	//printf("%s \n", sb2.buffer);
 	
 	/* Backward substitution */
 	double sum;
+	//PARALELIZABLE
 	for (k=n-1; k>=0; k--) { 
 		if (k % p == me) {
-			//printf("%d: \n",me);
-			//printf("a[%d] -> ", k);
 			sum = 0.0;
 			for (j=k+1; j < n; j++){ 
 				sum = sum + a[k][j] * x[j];
-				//printf("%f ", a[k][j]);
 			}	
-			//printf("\n b[%d] -> %f\n", k, b[k]);
 			x[k] = 1/a[k][k] * (b[k] - sum); 
-			//printf("x[%d] = %f\n", k, x[k]);
 		}
 		MPI_Bcast(&x[k], 1, MPI_DOUBLE, k%p, MPI_COMM_WORLD);
-		//printf("%d: x[%d] = %f \n", me, k, x[k]);
 	}
 	
 	//free(buf);
@@ -423,7 +376,8 @@ int max_col_loc(double **a, int k) {
 	
 	while (j % p != myrank) 
 		j++;
-		
+	
+	//PARALELIZABLE
 	for(; j < n; j += p) {
 		aux = fabs(a[j][k]);
 		//printf("%d: |max_val| = |%f| < |a[%d][%d]| = |%f|?", myrank, max_val, j, k, aux);
@@ -476,6 +430,7 @@ void exchange_row(double **a, double *b, int r, int k) {
 */
 void copy_row(double **a, double *b, int k, double *buf) {
 	int i = 0;
+	//PARALELIZABLE
 	for (; i < n; i++) {
 		buf[i] = a[k][i];
 	}
@@ -505,6 +460,7 @@ void copy_exchange_row(double **a, double *b, int r, double *buf, int k) {
 	b[r] = aux;
 	
 	int i = k;
+	//PARALELIZABLE
 	for (; i < n; i++) {
 		aux = buf[i];
 		buf[i] = a[r][i];
@@ -531,140 +487,9 @@ void copy_back_row(double **a, double *b, double *buf, int k) {
 	b[k] = buf[n];
 	
 	int i = k;
+	//PARALELIZABLE
 	for (; i < n; i++)
-	
 		a[k][i] = buf[i];
-}
-
-void test(double** a, double *b, int n) {
-	int i,j ,k;
-	double* buf = (double *) malloc((n+1) * sizeof(double));
-	for(i = 0; i < n; i++)
-		buf[i] = 1;
-		
-	buf[n] = 0;
-		
-	int myrank, p;
-	
-	MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
-	MPI_Comm_size(MPI_COMM_WORLD, &p);
-		
-	if(myrank == 0){
-		printf("A: \n");
-		for (i = 0; i < n; i++) {
-			fprintf(stdout, "row %d: \t", i);  	
-			for (j = 0; j < n; j++) {
-				fprintf(stdout, "%10.3g", a[i][j]);
-			}
-			fprintf(stdout, "\n");
-		}
-		
-		printf("b: \n");
-		for(i = 0; i < n; i++)
-			printf("%f \n", b[i]);
-		
-		
-		
-	}
-	
-	/*
-	if(myrank==0) printf("test max_col_loc\n");
-	k = 0;
-	int r = max_col_loc(a, 0);
-	printf("for rank %d, is the value (%f) in row (%d)\n",myrank, a[r][k], r);
-	*/
-	
-	/**/
-	
-	/*
-	if(myrank == 0){
-		printf("test exchange_row \n");
-		exchange_row(a, b, 0, 1);
-		exchange_row(a, b, 1, 2);
-		printf("A: \n");
-		for (i = 0; i < n; i++) {
-			fprintf(stdout, "row %d: \t", i);  	
-			for (j = 0; j < n; j++) {
-				fprintf(stdout, "%10.3g", a[i][j]);
-			}
-			fprintf(stdout, "\n");
-		}
-	}
-	
-	*/
-	
-	/*
-	if(myrank == 0){
-		printf("test copy_row \n");
-		copy_row(a,b,5,buf);
-		printf("buff: \n");
-		for(i = 0; i < n; i++)
-			printf("%f \t", buf[i]);
-			
-		printf("\n");
-		
-	}
-	*/
-	
-	/*
-	if(myrank == 0){
-		printf("test copy_exchange_row \n");
-		copy_exchange_row(a, b, 3, buf, 1);
-		
-		printf("A: \n");
-		for (i = 0; i < n; i++) {
-			fprintf(stdout, "row %d: \t", i);  	
-			for (j = 0; j < n; j++) {
-				fprintf(stdout, "%10.3g", a[i][j]);
-			}
-			fprintf(stdout, "\n");
-		}
-		
-		printf("b: \n");
-		for(i = 0; i < n; i++)
-			printf("%f \n", b[i]);
-		
-			
-		printf("\n");
-		
-		
-		
-		printf("buff: \n");
-		for(i = 0; i < n; i++)
-			printf("%f \t", buf[i]);
-			
-		
-			
-		printf("\n");
-	}
-	
-	*/
-	
-	if(myrank == 0){
-		printf("test copy_exchange_row \n");
-		copy_back_row(a, b, buf, 1);
-		
-		printf("A: \n");
-		for (i = 0; i < n; i++) {
-			fprintf(stdout, "row %d: \t", i);  	
-			for (j = 0; j < n; j++) {
-				fprintf(stdout, "%10.3g", a[i][j]);
-			}
-			fprintf(stdout, "\n");
-		}
-		
-		printf("b: \n");
-		for(i = 0; i < n; i++)
-			printf("%f \n", b[i]);
-					
-		printf("\n");
-						
-		printf("buff: \n");
-		for(i = 0; i < n; i++)
-			printf("%f \t", buf[i]);
-								
-		printf("\n");
-	}				
 }
 
 

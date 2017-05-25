@@ -41,11 +41,12 @@ double * gauss_double_cyclic (double **a, double *b, int n);
 
 int Co (int k);
 int Ro (int k);
-int member (int me, int G, char type);
 int Cop (int q);
 int Rop (int q);
+int member (int me, int G, char type);
 int grp_leader (int G, char type);
 int rank(int q, int G, char type);
+
 
 int max_col_loc(double** a, int k, int n);
 void exchange_row_loc(double** a, double* b, int r, int k);
@@ -53,9 +54,13 @@ void copy_row_loc(double** a, double* b, int k, double* buf);
 int compute_partner(int G, char type, int me);
 int compute_size(int n, int k, int G, char type);
 void exchange_row_buf(double** a, double* b, int r, double* buf, int k);
+void copy_back_row_loc(double** a, double* b, int k, double* buf);
 void compute_elim_fact_loc (double** a, double* b, int k, double* buf, double* elim_buf);
 void compute_local_entries(double** a, double* b, int k, double* elim_buf, double* buf);
 void backward_substitution(double** a, double* b, double* x);
+
+void printchunk(double** a, int me);
+void print_buf(int me, double* buf, int k);
 
 int main(int argc, char *argv[]) {
 
@@ -228,17 +233,7 @@ int main(int argc, char *argv[]) {
 	MPI_Comm_create_group(MPI_COMM_WORLD, row_group, 0, &row_comm);
 	MPI_Comm_create_group(MPI_COMM_WORLD, column_group, 1, &column_comm);
 
-/*
-	MPI_Comm_split(MPI_COMM_WORLD, myrank / p1, myrank, &row_comm);
-	
-	MPI_Comm_group (row_comm, &row_group);
-	
-	MPI_Comm_split(MPI_COMM_WORLD, myrank / p2, myrank, &column_comm);
-	
-	MPI_Comm_group (column_comm, &column_group);
-*/
-	
-	if(myrank == 0 && 1){
+	if(myrank == 0 && 0){
 
 		
 		//test Co, Ro
@@ -271,12 +266,12 @@ int main(int argc, char *argv[]) {
 		
 	}
 	MPI_Barrier(MPI_COMM_WORLD);
-	//result = gauss_double_cyclic (A, b, M);
-	
+	result = gauss_double_cyclic (A, b, M);
+    
 	//write back the result in the output file
 	MPI_Barrier(MPI_COMM_WORLD);
 	
-	if(myrank == 0 && 0){
+	if(myrank == 0){
 		mm_write_banner(f_output, matcode);
 	    mm_write_mtx_array_size(f_output, M, N);
 
@@ -292,28 +287,19 @@ int main(int argc, char *argv[]) {
 	}
 	printf("%s \n", sb.buffer);
 	
-	
-	/*
-	int dims[2]; dims[0] = dims[1] = 1;
-	int periods[2]; periods[0] = periods[1] = 1;
-	MPI_Comm grid_comm;
-	
-	MPI_Cart_create(MPI_COMM_WORLD, 2, dims, periods, 0 )
-	*/
-	
 	//row_rank: local rank in the row_group I am part of
 	//row_size: number of elements of the row_group I am part of
 	int row_rank, row_size;
 	MPI_Comm_rank(row_comm, &row_rank);
 	MPI_Comm_size(row_comm, &row_size);
 
-	//column_rank: local rank in the row_group I am part of
-	//column_size: number of elements of the row_group I am part of
+	//column_rank: local rank in the column_group I am part of
+	//column_size: number of elements of the column_group I am part of
 	int column_rank, column_size;
 	MPI_Comm_rank(column_comm, &column_rank);
 	MPI_Comm_size(column_comm, &column_size);
 
-	printf("WORLD RANK/SIZE: %d/%d \t ROW RANK/SIZE: %d/%d \t COLUMN RANK/SIZE: %d/%d\n", myrank, p, row_rank, row_size, column_rank, column_size);
+	//printf("WORLD RANK/SIZE: %d/%d \t ROW RANK/SIZE: %d/%d \t COLUMN RANK/SIZE: %d/%d\n", myrank, p, row_rank, row_size, column_rank, column_size);
 	
 	if(DEBUG_MATRIX) {
 	
@@ -383,20 +369,28 @@ double * gauss_double_cyclic (double **a, double *b, int n) {
 		if (member(me, Co(k), 'c')) {
 			r = max_col_loc(a, k, n);
 			z.pvtline = r; 
-			z.val = fabs(a[r][k]);
+			if (r != -1) 
+				z.val = fabs(a[r][k]);
+			else
+				z.val = 0.0;
+			if(k == 6 && 0)
+				printf("phase %d: processor %d says the max is %f from row %d\n", k, me, z.val, r);
 			int leader = grp_leader(Co(k), 'c');
-			int s; MPI_Comm_size(column_comm, &s);
+			int s; MPI_Comm_size(row_comm, &s);
 			int r; MPI_Comm_rank(column_comm, &r);
-			printf("here: %d, local rank: %d -> leader: %d -> Column group: %d of %d\n", me, r, leader, Co(k), s);
-			MPI_Reduce(&z, &y, 1, MPI_DOUBLE_INT, MPI_MAXLOC, leader, column_comm); /*comm(Co(k))*/
+			//printf("global_rank: %d -> leader: %d -> Column group: %d of %d\n", me, leader, Cop(me), s);
+			MPI_Reduce(&z, &y, 1, MPI_DOUBLE_INT, MPI_MAXLOC, 0, column_comm); /*comm(Co(k))*/      
+			if(me == leader && 0) 
+				printf("phase %d, rank: %d -> pivot row: %d\n", k, me, y.pvtline);
 		} //otherwise, just have to just the largest value from some on this group
 		
-		//broadcast the row with the largest absolute value
-		/*
+		//broadcast the row with the largest absolute value		
 		MPI_Bcast(&y, 1, MPI_DOUBLE_INT, grp_leader(Co(k), 'c'), MPI_COMM_WORLD);
-		r = y.pvtline;*/
+		r = y.pvtline;
 		
-		/*pivot row and row k are in the same row group 
+		
+		
+		/*pivot row and row k are in the same row group*/
 		if(Ro(k) == Ro(r)){
 			//if I am member of the row group of the row k
 			//I have chunks of the k row and the pivot row
@@ -406,42 +400,117 @@ double * gauss_double_cyclic (double **a, double *b, int n) {
 					exchange_row_loc(a, b, r, k); //exchange my chunks of data
 				//copy on the buffer to send it to others processors
 				copy_row_loc(a, b, k, buf); 
+				//print_buf(me, buf, k);
 			} 
 		}
-		 /* pivot row and row k are in different row groups 
-		else if (member(me, Ro(k), 'r')) {
+		 /* pivot row and row k are in different row groups */
+		else if (member(me, Ro(k), 'r')) { //I have the k row
 			//copy my chunk of data in the buffer
 			copy_row_loc(a, b, k, buf);
+			//print_buf(me, buf, k);
 			q = compute_partner(Ro(r), 'r', me);
+			//printf("I am %d, my partner is %d who own the pivot row: %d\n", me, q, r);
 			psz = compute_size(n, k, Ro(k), 'r');
+			//printf("rank %d have to send %d elements to %d\n", me, psz, q);
 			MPI_Send(buf+k, psz, MPI_DOUBLE, q, tag, MPI_COMM_WORLD); 
 		}
-		else if (member(me, Ro(r), 'r')) {
-			/* executing processor contains a part of the pivot row 
+		/* executing processor contains a part of the pivot row */
+		else if (member(me, Ro(r), 'r')) { //i have the pivot row
+			
 			q = compute_partner(Ro(k), 'r', me);
+			//printf("I am %d, my partner is %d who own the k row: %d\n", me, q, k);
 			psz = compute_size(n, k, Ro(r), 'r');
-			MPI_Recv(buf+k, psz, MPI_DOUBLE, q, tag, MPI_COMM_WORLD, &status) ;
+			//printf("rank %d have to receive %d elements from %d\n", me, psz, q);
+			MPI_Recv(buf+k, psz, MPI_DOUBLE, q, tag, MPI_COMM_WORLD, &status);
+			//print_buf(me, buf, k);
 			exchange_row_buf(a, b, r, buf, k);
 		}
 		
-		/* broadcast of pivot row 
+		//if(member(me, Ro(r), 'c'))
+		if(k == 6 && 0)
+			printchunk(a, me);
+
+		
+		/*
+		int myrank = me;
+
+		int column_size;
+		MPI_Comm_size(column_comm, &column_size);
+	
+		int row_size;
+		MPI_Comm_size(row_comm, &row_size);
+		MPI_Barrier(MPI_COMM_WORLD);
+		
+		int M = n, N = n;
+	
+		if(myrank == 0) printf("A: \n");
+		
+		for (i = 0; i < p; i++) {
+			if(member(myrank, i, 'c') && member(myrank, i, 'r')) {
+				printf("row %d: ", i);
+				for (j = 0; j < b2; j++) {
+					fprintf(stdout, "%10.3g", a[i][j]);
+				}
+				fprintf(stdout, "\n");
+			}
+			MPI_Barrier(MPI_COMM_WORLD);
+		}
+	
+		MPI_Barrier(MPI_COMM_WORLD);
+	
+		if(myrank == 0) printf("b: \n");
+		
+		for (i = 0; i < n; i++) {
+			if(member(myrank, 0, 'c') && member(myrank, i, 'r')){
+				fprintf(stdout, "%10.3g", b[i]);
+				fprintf(stdout, "\n");
+			}
+			MPI_Barrier(MPI_COMM_WORLD);
+		}
+	
+		MPI_Barrier(MPI_COMM_WORLD);
+		*/
+		/* broadcast of pivot row */
+		
 		buf_size = compute_size(n, k, Ro(k), 'r');
+		//printf("rank %d have to broadcast %d elements, root %d\n", me, buf_size, Ro(r));
 		MPI_Bcast(buf+k, buf_size, MPI_DOUBLE, Ro(r), column_comm);
-			
+		
+		
+		//print_buf(me, buf, k);
+		//if the k row and pivot row are in different row groups
+		//and I hadthe k row
 		if ((Ro(k) != Ro(r)) && (member(me, Ro(k), 'r')))
-			copy_row_loc(a, b, k, buf);
+			copy_back_row_loc(a, b, k, buf);
 			
 		if (member(me, Co(k), 'c')) 
 			compute_elim_fact_loc(a, b, k, buf, elim_buf);
 			
-		/* broadcast of elimination factors 
-		elim_size = compute_size(n, k, Co(k), 'c');
-		MPI_Bcast(elim_buf, elim_size, MPI_DOUBLE, Co(k), row_comm);
+		/* broadcast of elimination factors */
 			
+		elim_size = compute_size(n, k, Co(k), 'c');
+		//elim_size = n - k - 1;
+		elim_size--;
+		if(Cop(me) == Co(k) && 0)
+			printf("phase(%d) rank %d column %d, broadcast %d elements, root %d\n", k, me, Cop(me), elim_size, Co(k));
+		MPI_Bcast(elim_buf, elim_size, MPI_DOUBLE, Co(k), row_comm);
+		//print_buf(me, elim_buf, k);	
 		compute_local_entries(a, b, k, elim_buf, buf); 
+		if(Rop(me) == Ro(k) && 0){
+
+			int row_rank, column_size;
+			MPI_Comm_rank(row_comm, &row_rank);
+			MPI_Comm_size(column_comm, &column_size);
+
+			int i, end = (row_rank + 1) * b2; 	
 	
-	*/}
-	/*backward_substitution(a,b,x);*/
+			i = row_rank * b2 < k? k: row_rank * b2;
+			for(; i < end; i++) {
+				printf("phase(%d) rank: %d, a[%d][%d] = %f\n", k, me, k, i, a[k][i]);	
+			}
+		}
+	}
+	backward_substitution(a,b,x);
 	return x;
 }
 
@@ -477,6 +546,30 @@ int Ro (int k) {
 }
 
 /*
+	Cop:
+		int q: id processor
+		
+	return the column group of the given processor
+*/
+int Cop(int q) {
+	int row_size;
+	MPI_Comm_size(row_comm, &row_size);
+	return q % row_size;
+}
+
+/*member(me, Ro(k), 'r')MPI_COMM_WORLDcopy_back_row_loc(a, b, k, buf);
+	Rop:
+		int q: id processor
+		
+	return the row group of the given processor
+*/
+int Rop(int q) {
+	int row_size;
+	MPI_Comm_size(row_comm, &row_size);
+	return q / row_size;
+}
+
+/*
 	member:
 		int me: id processor
 		int G: number of group
@@ -495,16 +588,9 @@ int member(int me, int G, char type) {
 }
 
 /*
-	grp_leader:	int index = -1, i = 0, j = k;
-	double max_val = 0.0, aux = 0.0;
-	
-	int myrank, p;
-	MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
-	MPI_Comm_size(MPI_COMM_WORLD, &p);
+	grp_leader:	
 		int G: number of the group
 		char type: column group or row group
-		int p1: number of row processors
-		int p2: number of column processors
 		
 	return the group leader of the given group
 
@@ -526,7 +612,7 @@ int grp_leader(int G, char type) {
 	else if (type == 'r') {
 		//printf("column size: %d \n", column_size);
 		while(!member(leader, G, 'r') && leader < row_size*column_size)
-			leader+=column_size;
+			leader+=row_size;
 		return leader;
 	}
 	else
@@ -534,48 +620,21 @@ int grp_leader(int G, char type) {
 }
 
 /*
-	Cop:
-		int q: id processor
-		
-	return the column group of the given processor
-*/
-int Cop(int q) {
-	int column_size;
-	MPI_Comm_size(column_comm, &column_size);
-	return q % column_size;
-}
-
-/*member(me, Ro(k), 'r')MPI_COMM_WORLD
-	Rop:
-		int q: id processor
-		int p1: number of row processor
-		
-	return the row group of the given processor
-*/
-int Rop(int q) {
-	int row_size;
-	MPI_Comm_size(row_comm, &row_size);
-	return q / row_size;
-}
-
-/*
 	rank:
 		int q: id processor
 		int G: number of group
 		char type: column group or row group
-		int p: number of row/column processors
 		
 	return the rank of the given processor in the given group
 
 */
 int rank(int q, int G, char type) {
 	int p;
+	MPI_Comm_size(row_comm, &p);
 	if (type == 'c'){
-		MPI_Comm_size(row_comm, &p);
 		return q / p;
 	}
 	else if (type == 'r'){
-		MPI_Comm_size(column_comm, &p);
 		return q % p;
 	}
 	else
@@ -603,17 +662,16 @@ int max_col_loc(double** a, int k, int n) {
 	MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
 	MPI_Comm_size(MPI_COMM_WORLD, &p);
 	
-	int column_size;
-	MPI_Comm_size(column_comm, &column_size);
-	
-	int row = Ro(myrank);
-	j = row * column_size;
-	
-	for(; j < (row + 1) * column_size && j < n; j++) {
+	int row_group = Rop(myrank), end = (row_group + 1) * b1;
+	j = row_group * b1 < k? k: row_group * b1;
+//	if(k == 6)
+	//	printf("rank %d, init: %d, fin: %d\n", myrank, j, end);	
+	for(; j <  end; j++) {
+	//	if(k == 6)
+		//	printf("rank %d, j: %d, a[%d][%d]: %f\n", myrank, j, j, k, a[j][k]);	
 		aux = fabs(a[j][k]);
 
 		if( max_val < aux) {
-
 			max_val = aux;
 			index = j;
 		}
@@ -632,23 +690,31 @@ int max_col_loc(double** a, int k, int n) {
 		int k: row k
 	member(me, Ro(k), 'r')
 		Both rows owns to the processor
-		exchange the row k and the row r in the matrix a and the vector bMPI_COMM_WORLD
+		exchange the row k and the row r in the matrix a and the vector b
 		exchange only the chunks of data the processor owns
 
 */
 void exchange_row_loc(double** a, double* b, int r, int k) {
-	
-	int column_rank, column_size;
-	MPI_Comm_rank(column_comm, &column_rank);
-	MPI_Comm_size(column_comm, &column_size);
+/*
+	int row_rank, row_size;
+	MPI_Comm_rank(row_comm, &row_rank);
+	MPI_Comm_size(row_comm, &row_size);
 
-	int j = column_rank * b2, end = (column_rank + 1) * b2;
+	int j, end = (row_rank + 1) * b2;
+	j = row_rank * b2 < k ? k : row_rank * b2;
+	*/
+	int rank;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+	int j, end = (Cop(rank) + 1) * b2;
+	j = Cop(rank) * b2 < k ? k : Cop(rank) * b2;
 	
 	double aux = b[r];
 	b[r] = b[k];
 	b[k] = aux;
 	
-	for(j; j < end && j < n; j++) {
+	for(j; j < end; j++) {
+		//printf("asdsad\n");
 		aux = a[r][j];
 		a[r][j] = a[k][j];
 		a[k][j] = aux;
@@ -669,19 +735,104 @@ void exchange_row_loc(double** a, double* b, int r, int k) {
 */
 void copy_row_loc(double** a, double* b, int k, double* buf) {
 	
-	int column_rank, column_size;
-	MPI_Comm_rank(column_comm, &column_rank);
-	MPI_Comm_size(column_comm, &column_size);
+	/*
+	int row_rank, row_size;
+	MPI_Comm_rank(row_comm, &row_rank);
+	MPI_Comm_size(row_comm, &row_size);
 
-	int j = column_rank * b2, end = (column_rank + 1) * b2;
-	
-	while (j < k && j < end)
-		j++;
-		
-	buf[n] = b[k];
+	int j, end = (row_rank + 1) * b2;
+	j = row_rank * b2 < k ? k : row_rank * b2;
+*/
+	int rank;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+	int j, end = (Cop(rank) + 1) * b2;
+	j = Cop(rank) * b2 < k ? k : Cop(rank) * b2;
+
+	buf[end] = b[k];
 	int i = 0;
-	for(j; j < end && j < n; j++) {
+	for(j; j < end; j++) {
 		buf[k + i] = a[k][j];
+		i++;
+	}
+}
+
+/*
+	exchange_row_buf:
+	
+		double** a: (n x n) matrix 
+		double* b: vector of size n
+		int r: row r
+		double* buf: buffer with size n
+		int k: index k
+		
+		exchange the data on the buffer with the data in the row r in the matrix a
+		and the element r in the vector r
+		The exchange starts from the minimum between index k 
+		and the start index of the chunk of data
+
+*/
+void exchange_row_buf(double** a, double* b, int r, double* buf, int k) {
+	/*
+	int row_rank, row_size;
+	MPI_Comm_rank(row_comm, &row_rank);
+	MPI_Comm_size(row_comm, &row_size);
+
+	int j, end = (row_rank + 1) * b2;
+	
+	j = row_rank * b2 < k? k: row_rank * b2;
+	*/
+	int rank;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+	int j, end = (Cop(rank) + 1) * b2;
+	j = Cop(rank) * b2 < k ? k : Cop(rank) * b2;
+	
+	double aux = buf[end];
+	buf[end] = b[r];
+	b[r] = aux;
+	
+	int i = 0;
+	for(; j < end; j++) {
+		aux = buf[k + i];
+		buf[k + i] = a[r][j];
+		a[r][j] = aux;
+		i++;
+	}
+}
+
+/*
+	copy_back_row_loc:
+	
+		double** a: (n x n) matrix 
+		double* b: vector of size n
+		int k: row k
+		double* buf: buffer with size n
+	
+		copy the chunk of data of row k of the matrix a
+		and the element k of vector b in the buffer (the opposite now :P)
+
+*/
+void copy_back_row_loc(double** a, double* b, int k, double* buf) {
+	
+	/*
+	int row_rank, row_size;
+	MPI_Comm_rank(row_comm, &row_rank);
+	MPI_Comm_size(row_comm, &row_size);
+
+	int j, end = (row_rank + 1) * b2;
+	j = row_rank * b2 < k ? k : row_rank * b2;
+*/
+	int rank;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+	int j, end = (Cop(rank) + 1) * b2;
+	j = Cop(rank) * b2 < k ? k : Cop(rank) * b2;
+
+	b[k] = buf[end];
+	int i = 0;
+	for(j; j < end; j++) {
+		a[k][j] = buf[k + i];
 		i++;
 	}
 }
@@ -703,17 +854,16 @@ void copy_row_loc(double** a, double* b, int k, double* buf) {
 int compute_partner(int G, char type, int me) {
 
 	int row_size, column_size;
-
 	MPI_Comm_size(row_comm, &row_size);
 	MPI_Comm_size(column_comm, &column_size);
 	
 	if (type == 'c') {
 		int row_group = Rop(me);
-		return row_group * column_size + G;
+		return row_group * row_size + G;
 	}
 	else if (type == 'r') {
 		int col_group = Cop(me);
-		return G * column_size + col_group;
+		return G * row_size + col_group;
 	}
 	else
 		return -1;
@@ -729,77 +879,34 @@ int compute_partner(int G, char type, int me) {
 		
 		Compute the chunk size from the minimum between the k index column/row
 		and the start index of the chunk of data
-		until the index of the next 
+		until the index of the next processor
 
 */
 int compute_size(int n, int k, int G, char type) {
 
-	int rank, size = 0, j = -1, end = -1;
+	int rank, size = 1, j = -1, end = -1;
 
 	if (type == 'c') {
 		MPI_Comm_rank(column_comm, &rank);
-		MPI_Comm_size(column_comm, &size);
+//		MPI_Comm_size(column_comm, &size);
 			
-		j = rank * b2, end = (rank + 1) * b2;
+		j = rank * b1, end = (rank + 1) * b1;
 
 	}
 	else if (type == 'r') {
 		MPI_Comm_rank(row_comm, &rank);
-		MPI_Comm_size(row_comm, &size);
+//		MPI_Comm_size(row_comm, &size);
 		
-		j = rank * b1, end = (rank + 1) * b1;
+		j = rank * b2, end = (rank + 1) * b2;
 	}
 	else 
 		return -1;
 		
-	while (j < k && j < end)
-		j++;
-		member(rank, Ro(k), 'r');
-	for(j; j < end && j < n; j++)
-		size++;
-		
+	j = j < k? k : j;
+	size += end - j > 0? end - j: 0;
 	//size += (n - j);
 		
 	return size;
-}
-
-/*
-	exchange_row_buf:
-	
-		double** a: (n x n) matrix 
-		double* b: vector of size n
-		int r: row r
-		double* buf: buffer with size n
-		int k: index k
-		
-		exchange the data on the buffer with the data in the row r in the matrix a
-		and the element r in the vector r
-		The exchange starts from the minimum between index k 
-		and the start index of the chunk of data
-
-*/
-void exchange_row_buf(double** a, double* b, int r, double* buf, int k) {
-	
-	int column_rank, column_size;
-	MPI_Comm_rank(column_comm, &column_rank);
-	MPI_Comm_size(column_comm, &column_size);
-
-	int j = column_rank * b2, end = (column_rank + 1) * b2;
-	
-	double aux = buf[n];
-	buf[n] = b[r];
-	b[r] = aux;
-	
-	while (j < k && j < end)
-		j++;
-	
-	int i = 0;
-	for(; j < end && j < n; j++) {
-		aux = buf[k + i];
-		buf[k + i] = a[r][j];
-		a[r][j] = aux;
-		i++;
-	}
 }
 
 /*
@@ -817,18 +924,26 @@ void compute_elim_fact_loc (double** a, double* b, int k, double* buf, double* e
 	MPI_Comm_rank(column_comm, &column_rank);
 	MPI_Comm_size(column_comm, &column_size);
 	
-	int i = column_rank * b2, end = (column_rank + 1) * b2; 
-	while (i < k+1 && i < end) 
-		i++;
+	int rank;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	
+	int i, end = (column_rank + 1) * b1; 
+	
+	i = column_rank * b1 < k+1? k+1: column_rank * b1;
+	//printf("rank %d -> i = %d end= %d\n", rank, i, end);
 	int j = 0;
-	for (; i < end && i < n; i++) {
-		elim_buf[j] = a[i][k] / buf[k];
+	for (;i < end; i++) {
+		elim_buf[j] = a[i][k] / buf[k];	
+		printf("phase(%d) row (%d) -> elim fact = %f\n", k, i, elim_buf[j]);	
+		b[i] = b[i] - elim_buf[j]*buf[end];
 		j++;
-		b[i] = b[i] - elim_buf[j]*buf[n];
 	}
 }
 
+/*
+
+
+*/
 void compute_local_entries(double** a, double* b, int k, double* elim_buf, double* buf) {
 
 	int row_rank, row_size;
@@ -839,24 +954,27 @@ void compute_local_entries(double** a, double* b, int k, double* elim_buf, doubl
 	MPI_Comm_rank(column_comm, &column_rank);
 	MPI_Comm_size(column_comm, &column_size);
 
-	int i = column_rank * b2, end = (column_rank + 1) * b2; 	
-	int j = row_rank * b1, end2 = (row_rank + 1) * b1; 
+	int i, end = (column_rank + 1) * b1; 	
+	int j, end2 = (row_rank + 1) * b2; 
 	
-	while (i < k+1 && i < end) 
-		i++;
-		
-	while (j < k+1 && j < end2) 
-		j++;
+	i = column_rank * b1 < k+1? k+1: column_rank * b1;
+	j = row_rank * b2 < k+1? k+1: row_rank * b2;
 	
+	int me;
+	MPI_Comm_rank(MPI_COMM_WORLD, &me);
+	
+	//printf("i = %d end= %d, j = %d end2 = %d\n", i, end,j,end2 );
 	int h = j;
-	int k1 = 0, k2 = 0;
+	int buf_index = 0, ebuf_index = 0;
 	for (; i < end; i++) {
-		k1 = 0;
+		//printf("phase(%d) rank %d, row (%d)\n", k, me, i);
+		buf_index = 0;
 		for (j = h; j < end2; j++){
-			a[i][j] = a[i][j] - elim_buf[k2]*buf[k + k1];	
-			k1++;
+			//printf("phase(%d) rank %d, column (%d)\n", k, me, j);
+			a[i][j] = a[i][j] - elim_buf[ebuf_index]*buf[k + buf_index];	
+			buf_index++;
 		}
-		k2++;
+		ebuf_index++;
 	}
 }
 
@@ -878,8 +996,8 @@ void backward_substitution(double** a, double* b, double* x) {
 	for (k = n - 1; k >= 0; k--) {
 	
 		if (member(me, Ro(k), 'r')) {
-			j = column_rank * b2 < k + 1? column_rank * b2: k + 1;
-			end = (column_rank + 1) * b2; 
+			j = column_rank * b1 < k + 1? column_rank * b1: k + 1;
+			end = (column_rank + 1) * b1; 
 			sum = 0.0;
 			for (j = k + 1; j < end; j++){ 
 				sum = sum + a[k][j] * x[j];
@@ -898,6 +1016,58 @@ void backward_substitution(double** a, double* b, double* x) {
 	}
 }
 
+void printchunk(double** a, int me) {
+	StringBuffer sb2;		
+	init_string_buffer(&sb2);
+	
+	int row_rank, row_size;
+	MPI_Comm_rank(row_comm, &row_rank);
+	MPI_Comm_size(row_comm, &row_size);
+
+	int column_rank, column_size;
+	MPI_Comm_rank(column_comm, &column_rank);
+	MPI_Comm_size(column_comm, &column_size);
+
+	int i, end = (Rop(me) + 1) * b1; 	
+	int j, end2 = (Cop(me) + 1) * b2; 
+	
+	i = Rop(me) * b1;
+	j = Cop(me) * b2;
+	
+	int h = j;
+	appendRank(me, &sb2);
+	for (; i < end; i++) {
+
+		//appendString("\n", &sb2);
+		appendString("row ", &sb2);
+		appendInt(i, &sb2);
+		appendString(": ", &sb2);
+		for (j = h; j < end2; j++){
+			appendFloat(a[i][j], 5, &sb2);
+			appendString(" ", &sb2);
+		}
+		appendString("\n", &sb2);
+	}
+	
+	printf("%s \n", sb2.buffer);
+}
+
+
+void print_buf(int me, double* buf, int k) {
+
+	int rank;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+	StringBuffer sb2;		
+	init_string_buffer(&sb2);
+
+	appendRank(me, &sb2);
+	appendString("phase(", &sb2);
+	appendInt(k,&sb2 );
+	appendString(") buf: ", &sb2);
+	appendFloatArray(buf, n+1, &sb2);
+	appendString("\n", &sb2);
+	printf("%s \n", sb2.buffer);
+}
 
 
 
