@@ -496,7 +496,7 @@ double * gauss_double_cyclic (double **a, double *b, int n) {
 		MPI_Bcast(elim_buf, elim_size, MPI_DOUBLE, Co(k), row_comm);
 		//print_buf(me, elim_buf, k);	
 		compute_local_entries(a, b, k, elim_buf, buf); 
-		if(Rop(me) == Ro(k) && 0){
+		if(Rop(me) == Ro(k)){
 
 			int row_rank, column_size;
 			MPI_Comm_rank(row_comm, &row_rank);
@@ -504,7 +504,7 @@ double * gauss_double_cyclic (double **a, double *b, int n) {
 
 			int i, end = (row_rank + 1) * b2; 	
 	
-			i = row_rank * b2 < k? k: row_rank * b2;
+			i = row_rank * b2;
 			for(; i < end; i++) {
 				printf("phase(%d) rank: %d, a[%d][%d] = %f\n", k, me, k, i, a[k][i]);	
 			}
@@ -934,7 +934,7 @@ void compute_elim_fact_loc (double** a, double* b, int k, double* buf, double* e
 	int j = 0;
 	for (;i < end; i++) {
 		elim_buf[j] = a[i][k] / buf[k];	
-		printf("phase(%d) row (%d) -> elim fact = %f\n", k, i, elim_buf[j]);	
+		//printf("phase(%d) row (%d) -> elim fact = %f\n", k, i, elim_buf[j]);	
 		b[i] = b[i] - elim_buf[j]*buf[end];
 		j++;
 	}
@@ -965,13 +965,15 @@ void compute_local_entries(double** a, double* b, int k, double* elim_buf, doubl
 	
 	//printf("i = %d end= %d, j = %d end2 = %d\n", i, end,j,end2 );
 	int h = j;
-	int buf_index = 0, ebuf_index = 0;
+	int buf_index = b2 - (end2 - j), ebuf_index = 0;
 	for (; i < end; i++) {
 		//printf("phase(%d) rank %d, row (%d)\n", k, me, i);
-		buf_index = 0;
+		buf_index = b2 - (end2 - j);
 		for (j = h; j < end2; j++){
 			//printf("phase(%d) rank %d, column (%d)\n", k, me, j);
-			a[i][j] = a[i][j] - elim_buf[ebuf_index]*buf[k + buf_index];	
+			printf("phase(%d) ->>> rank: %d, a[%d][%d] = %f - %f*%f \n", k, me, i, j, a[i][j], elim_buf[ebuf_index], buf[k + buf_index]);
+			a[i][j] = a[i][j] - elim_buf[ebuf_index]*buf[k+ buf_index];	
+			printf("phase(%d) ->>> rank: %d, a[%d][%d] = %f \n", k, me, i, j, a[i][j]);
 			buf_index++;
 		}
 		ebuf_index++;
@@ -979,7 +981,11 @@ void compute_local_entries(double** a, double* b, int k, double* elim_buf, doubl
 }
 
 
+/*
 
+
+
+*/
 void backward_substitution(double** a, double* b, double* x) {
 		
 	/* Backward substitution */
